@@ -39,6 +39,13 @@ def test_webapp_flow():
         health = _request(port, "GET", "/api/health")
         assert health["ok"] and "suggested_depth" in health
 
+        # Proxies / preview health-checks may use HEAD — must not 501.
+        head = urllib.request.Request(
+            f"http://127.0.0.1:{port}/", method="HEAD"
+        )
+        with urllib.request.urlopen(head, timeout=10) as resp:
+            assert resp.status == 200
+
         game = _request(port, "POST", "/api/new_game", {})
         assert "e2e4" in game["legal"]
 

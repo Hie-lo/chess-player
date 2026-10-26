@@ -15,7 +15,14 @@ from .analysis import (
     analyze_position_multipv,
     evaluate_guess,
 )
-from .engine import EngineResult, SimpleEngine, StockfishEngine, get_engine
+from .engine import (
+    EngineResult,
+    SimpleEngine,
+    StockfishEngine,
+    find_stockfish,
+    get_engine,
+    stockfish_candidates,
+)
 
 __all__ = [
     "EngineResult",
@@ -27,7 +34,9 @@ __all__ = [
     "analyze_position",
     "analyze_position_multipv",
     "evaluate_guess",
+    "find_stockfish",
     "get_engine",
+    "stockfish_candidates",
 ]
 
 __version__ = "0.1.0"

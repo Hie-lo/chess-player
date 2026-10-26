@@ -14,8 +14,11 @@ Both engines share one interface, :meth:`analyse`.
 
 from __future__ import annotations
 
+import os
 import shutil
+import sys
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import chess
 import chess.engine
@@ -354,31 +357,160 @@ class SimpleEngine:
 
 
 # --------------------------------------------------------------------------
-# Factory
+# Factory + Stockfish discovery
 # --------------------------------------------------------------------------
+
+_ARCHIVE_SUFFIXES = {".zip", ".tar", ".gz", ".tgz", ".xz", ".7z", ".rar"}
+_SKIP_DIRS = {".git", "__pycache__", ".venv", "venv", "node_modules", ".pytest_cache"}
+_SYSTEM_PATHS = [
+    "/usr/bin/stockfish",
+    "/usr/local/bin/stockfish",
+    "/opt/homebrew/bin/stockfish",
+    "/usr/games/stockfish",
+    r"C:\Program Files\Stockfish\stockfish.exe",
+    r"C:\Program Files (x86)\Stockfish\stockfish.exe",
+]
+
+
+def _variant_rank(name: str) -> int:
+    """Prefer plain / widely-compatible builds over AVX-512 ones.
+
+    An AVX512/VNNI512 binary crashes with an illegal instruction on CPUs
+    without those extensions, so when a download folder offers several
+    variants we try the safe ones first.
+    """
+    lowered = name.lower()
+    if lowered in ("stockfish", "stockfish.exe"):
+        return 0
+    if "avx512" in lowered or "vnni512" in lowered or "icl" in lowered:
+        return 5
+    if "avxvnni" in lowered or "vnni" in lowered:
+        return 4
+    if "bmi2" in lowered:
+        return 3
+    if "avx2" in lowered:
+        return 2
+    if "modern" in lowered or "popcnt" in lowered or "sse41" in lowered:
+        return 1
+    return 2
+
+
+def _is_plausible_binary(path: Path) -> bool:
+    if not path.is_file():
+        return False
+    if path.suffix.lower() in _ARCHIVE_SUFFIXES:
+        return False  # a downloaded .zip must be extracted first
+    # Accept bare ``stockfish`` (Unix) and ``stockfish....exe`` (Windows) —
+    # but not stockfish.py / .md / .txt / source files that share the stem.
+    return path.suffix.lower() in ("", ".exe")
+
+
+def stockfish_candidates(
+    explicit_path: str | None = None, *, roots: list[Path] | None = None
+) -> list[str]:
+    """Every plausible Stockfish binary, most promising first.
+
+    Search order: explicit path -> ``$STOCKFISH_PATH`` -> ``PATH`` ->
+    well-known system locations -> the project folder, recursively
+    (``./stockfish.exe``, ``./engines/...``, ``./stockfish/stockfish-*.exe``
+    and friends).  Dropping the extracted binary anywhere in the project
+    is therefore enough — run ``python -m chess_player doctor`` to see
+    exactly what was found.
+    """
+    found: list[str] = []
+
+    def add(value: str | Path | None) -> None:
+        if not value:
+            return
+        text = str(value)
+        if text not in found:
+            found.append(text)
+
+    add(explicit_path)
+    add(os.environ.get("STOCKFISH_PATH"))
+    add(shutil.which("stockfish"))
+    add(shutil.which("stockfish.exe"))
+    for system_path in _SYSTEM_PATHS:
+        if Path(system_path).exists():
+            add(system_path)
+
+    search_roots: list[Path] = list(roots) if roots is not None else []
+    if roots is None:
+        project_root = Path(__file__).resolve().parent.parent
+        search_roots = [Path.cwd(), project_root]
+
+    globbed: list[Path] = []
+    for root in search_roots:
+        if not root.is_dir():
+            continue
+        for pattern in ("stockfish*", "**/stockfish*"):
+            try:
+                matches = root.glob(pattern)
+            except OSError:
+                continue
+            for match in matches:
+                if any(part in _SKIP_DIRS for part in match.parts):
+                    continue
+                if match not in globbed and _is_plausible_binary(match):
+                    globbed.append(match)
+    # Shallower, plainer, safer-CPU builds first.
+    globbed.sort(
+        key=lambda p: (len(p.parts), _variant_rank(p.name), p.name.lower())
+    )
+    for match in globbed:
+        add(match)
+    return found
 
 
 def find_stockfish(explicit_path: str | None = None) -> str | None:
-    """Locate a Stockfish binary: explicit path, $STOCKFISH_PATH, then PATH."""
-    import os
+    """First plausible Stockfish binary (see :func:`stockfish_candidates`)."""
+    candidates = stockfish_candidates(explicit_path)
+    return candidates[0] if candidates else None
 
-    for candidate in (explicit_path, os.environ.get("STOCKFISH_PATH")):
-        if candidate:
-            return candidate
-    return shutil.which("stockfish")
+
+def _try_stockfish(path: str) -> StockfishEngine:
+    """Launch a candidate, fixing a missing +x bit once along the way."""
+    try:
+        return StockfishEngine(path)
+    except PermissionError:
+        candidate = Path(path)
+        if candidate.is_file() and os.name != "nt":
+            candidate.chmod(candidate.stat().st_mode | 0o755)
+            return StockfishEngine(path)
+        raise
 
 
 def get_engine(engine_arg: str | None = "auto"):
     """Create an engine.
 
     ``engine_arg``:
-      * ``"auto"`` (default) — Stockfish if found, else SimpleEngine;
+      * ``"auto"`` (default) — first working Stockfish found by
+        :func:`stockfish_candidates`, else SimpleEngine (candidates that
+        fail to launch are skipped with a warning instead of crashing);
       * ``"simple"`` — always the fallback engine;
-      * any other string — treated as a path to a UCI engine binary.
+      * any other string — a path to a UCI engine binary (must work).
     """
     if engine_arg == "simple":
         return SimpleEngine()
     if engine_arg in (None, "auto"):
-        path = find_stockfish()
-        return StockfishEngine(path) if path else SimpleEngine()
-    return StockfishEngine(engine_arg)
+        failures: list[str] = []
+        for candidate in stockfish_candidates():
+            # A bare name resolved via PATH exists by construction;
+            # path-like candidates must exist as files.
+            if os.sep in candidate or "/" in candidate or "\\" in candidate:
+                if not Path(candidate).is_file():
+                    continue
+            try:
+                return _try_stockfish(candidate)
+            except Exception as exc:  # wrong arch, missing DLL, not UCI...
+                failures.append(f"{candidate} -> {type(exc).__name__}: {exc}")
+        for failure in failures:
+            print(f"⚠️ Stockfish پیدا شد ولی اجرا نشد: {failure}", file=sys.stderr)
+        if failures:
+            print(
+                "⚠️ از موتور جایگزین استفاده می‌شود. "
+                "`python -m chess_player doctor` را برای جزئیات اجرا کنید.",
+                file=sys.stderr,
+            )
+        return SimpleEngine()
+    return _try_stockfish(engine_arg)

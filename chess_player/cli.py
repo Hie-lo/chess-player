@@ -18,6 +18,11 @@ Launch the live-analysis web studio (analysis board + play vs engine
 + guess-the-move training + PGN review + image import)::
 
     python -m chess_player serve --port 8000
+
+Diagnose an engine that will not start (where Stockfish was searched,
+whether each candidate launches, a test analysis)::
+
+    python -m chess_player doctor
 """
 
 from __future__ import annotations
@@ -31,7 +36,7 @@ import chess.pgn
 
 from . import report
 from .analysis import analyze_game, analyze_position
-from .engine import get_engine
+from .engine import get_engine, stockfish_candidates
 
 
 def _add_engine_args(parser: argparse.ArgumentParser) -> None:
@@ -160,8 +165,92 @@ def cmd_image(args: argparse.Namespace) -> int:
 def cmd_serve(args: argparse.Namespace) -> int:
     from .webapp import serve
 
-    serve(host=args.host, port=args.port, engine_arg=args.engine)
+    try:
+        serve(host=args.host, port=args.port, engine_arg=args.engine)
+    except OSError as exc:
+        print(f"✗ سرور روی پورت {args.port} بالا نیامد: {exc}", file=sys.stderr)
+        print(
+            "احتمالاً این پورت اشغال است (شاید یک اجرای قبلی هنوز باز است). "
+            f"با پورت دیگر اجرا کنید:  python -m chess_player serve --port 8765\n"
+            "و در مرورگر http://localhost:8765 را باز کنید.",
+            file=sys.stderr,
+        )
+        return 1
     return 0
+
+
+def cmd_doctor(args: argparse.Namespace) -> int:
+    """Diagnose engine discovery: candidates, launch test, test analysis."""
+    import importlib.util
+    import os
+    import platform
+    import time
+
+    print("🩺 chess-player doctor")
+    print(f"سیستم: {platform.system()} {platform.machine()} | Python {sys.version.split()[0]}")
+    print(f"پوشهٔ فعلی: {Path.cwd()}")
+    print(f"STOCKFISH_PATH: {os.environ.get('STOCKFISH_PATH') or '(تنظیم نشده)'}")
+    for module in ("chess", "PIL", "numpy"):
+        ok = importlib.util.find_spec(module) is not None
+        print(f"ماژول {module}: {'✓' if ok else '✗ نصب نیست'}")
+
+    explicit = None if args.engine in ("auto", "simple") else args.engine
+    candidates = stockfish_candidates(explicit)
+    print("\nنامزدهای Stockfish (به ترتیب تلاش):")
+    if not candidates:
+        print("  (هیچ فایلی پیدا نشد)")
+    for candidate in candidates:
+        path = Path(candidate)
+        exists = path.exists() if (path.is_absolute() or os.sep in candidate) else True
+        size = ""
+        if exists and path.is_file():
+            size = f" — {path.stat().st_size / 1e6:.1f} MB"
+        print(f"  - {candidate}{size}{' (یافت نشد!)' if not exists else ''}")
+
+    archives = [
+        p
+        for pattern in ("stockfish*.zip", "stockfish*.tar*", "stockfish*.7z")
+        for p in Path.cwd().glob(pattern)
+    ]
+    if archives:
+        print(
+            "⚠️ فایل فشردهٔ Stockfish دیده شد — اول آن را Extract کنید؛ "
+            f"برنامه فایل اجرایی داخلش را لازم دارد: {[str(a) for a in archives]}"
+        )
+
+    print("\nتست اجرا و تحلیل…")
+    started = time.time()
+    try:
+        engine = get_engine(args.engine)
+    except Exception as exc:
+        print(f"✗ موتور اجرا نشد: {type(exc).__name__}: {exc}")
+        print(
+            "راه‌حل‌ها: نسخهٔ مناسب سیستم‌تان را از stockfishchess.org بگیرید "
+            "(Windows x64)، از زیپ خارجش کنید، و مسیر کامل exe را بدهید:\n"
+            '  python -m chess_player serve --engine "C:\\مسیر\\stockfish.exe"'
+        )
+        return 1
+    try:
+        board = chess.Board()
+        depth = 2 if "SimpleEngine" in engine.name else 10
+        result = engine.analyse(board, depth=depth)
+        best = board.san(result.best_move) if result.best_move else "—"
+        print(
+            f"✓ موتور فعال: {engine.name}\n"
+            f"✓ تست تحلیل: بهترین حرکت آغازین {best}، عمق {result.depth}، "
+            f"در {time.time() - started:.1f} ثانیه"
+        )
+        if "SimpleEngine" in engine.name and args.engine != "simple":
+            print(
+                "⚠️ هنوز موتور جایگزین فعال است. یکی از این کارها:\n"
+                "  ۱) فایل اجرایی Stockfish را در ریشهٔ پروژه یا پوشهٔ engines بگذارید و دوباره اجرا کنید؛\n"
+                '  ۲) مسیر کامل را بدهید:  python -m chess_player serve --engine "C:\\مسیر\\stockfish.exe"\n'
+                "  ۳) یا متغیر STOCKFISH_PATH را روی همان مسیر تنظیم کنید."
+            )
+            return 2
+        return 0
+    finally:
+        engine.close()
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -198,6 +287,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_serve.add_argument("--port", type=int, default=8000)
     p_serve.add_argument("--engine", default="auto")
     p_serve.set_defaults(func=cmd_serve)
+
+    p_doctor = sub.add_parser(
+        "doctor", help="عیب‌یابی پیدا/اجرا نشدن Stockfish و تست تحلیل"
+    )
+    p_doctor.add_argument(
+        "--engine", default="auto",
+        help="'auto'، 'simple' یا مسیر کامل فایل اجرایی Stockfish",
+    )
+    p_doctor.set_defaults(func=cmd_doctor)
 
     return parser
 

@@ -342,6 +342,17 @@ def make_handler(app: _App):
             else:
                 self._send_json({"error": "not found"}, 404)
 
+        def do_HEAD(self):  # noqa: N802 — proxies/health-checkers use HEAD
+            if self.path in ("/", "/api/health"):
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+            else:
+                self.send_response(404)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
         def do_POST(self):  # noqa: N802
             try:
                 data = self._read_json()
@@ -393,9 +404,28 @@ def make_server(host: str, port: int, engine) -> ThreadingHTTPServer:
 
 def serve(host: str = "0.0.0.0", port: int = 8000, engine_arg: str = "auto") -> None:
     engine = get_engine(engine_arg)
-    server = make_server(host, port, engine)
-    print(f"موتور: {engine.name}")
-    print(f"استودیو تحلیل زنده: http://{host}:{port}  (Ctrl+C برای خروج)")
+    server = make_server(host, port, engine)  # raises OSError if port is busy
+    # 0.0.0.0 is a *bind* address ("listen on all interfaces"), not an
+    # address a browser can open — print the URL that actually works.
+    display_host = "localhost" if host in ("0.0.0.0", "::", "") else host
+    print(f"موتور: {engine.name}", flush=True)
+    if "SimpleEngine" in engine.name and engine_arg != "simple":
+        from .engine import stockfish_candidates
+
+        candidates = stockfish_candidates()
+        print(
+            "ℹ️ Stockfish پیدا نشد/اجرا نشد و موتور ضعیف جایگزین فعال است.\n"
+            "   فایل اجرایی Stockfish (بعد از خارج‌کردن از زیپ) را یکی از این جاها بگذارید:\n"
+            "   ریشهٔ پروژه، پوشهٔ engines/‏، یا با فلگ ‎--engine \"مسیر\\stockfish.exe\"‎\n"
+            "   مسیرهای بررسی‌شده با دستور `python -m chess_player doctor` دیده می‌شوند."
+            + (f"\n   نامزدهای پیدا‌شده: {candidates}" if candidates else ""),
+            flush=True,
+        )
+    print(
+        f"استودیو تحلیل زنده: http://{display_host}:{port}  "
+        f"(همین آدرس را در مرورگر باز کنید — نه 0.0.0.0)  (Ctrl+C برای خروج)",
+        flush=True,
+    )
     try:
         server.serve_forever()
     except KeyboardInterrupt:
