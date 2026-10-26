@@ -7,8 +7,9 @@ dist/
 build/
 *.egg-info/
 reports/
-*.html
-!docs/*.html
+# Generated report files in the repo root only (NOT the web UI in
+# chess_player/static/):
+/*.html
 .env
 # Local engine binaries (download Stockfish separately, do not commit it)
 stockfish*

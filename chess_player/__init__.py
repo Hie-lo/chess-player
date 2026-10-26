@@ -7,7 +7,14 @@ one — engine assistance during rated online play is cheating under the
 Chess.com Fair Play Policy and the Lichess Terms of Service.
 """
 
-from .analysis import GameAnalysis, MoveAnalysis, analyze_game, analyze_position
+from .analysis import (
+    GameAnalysis,
+    MoveAnalysis,
+    analyze_game,
+    analyze_position,
+    analyze_position_multipv,
+    evaluate_guess,
+)
 from .engine import EngineResult, SimpleEngine, StockfishEngine, get_engine
 
 __all__ = [
@@ -18,6 +25,8 @@ __all__ = [
     "StockfishEngine",
     "analyze_game",
     "analyze_position",
+    "analyze_position_multipv",
+    "evaluate_guess",
     "get_engine",
 ]
 

@@ -197,6 +197,115 @@ def analyze_position(engine, board: chess.Board, *, depth: int = 14) -> dict:
     }
 
 
+def _line_to_dict(board: chess.Board, result: EngineResult, rank: int) -> dict:
+    eval_white = result.score_cp if board.turn == chess.WHITE else -result.score_cp
+    return {
+        "rank": rank,
+        "eval_cp": result.score_cp,  # side-to-move POV
+        "eval_white_cp": eval_white,
+        "mate": result.mate,  # side-to-move POV
+        "win_percent": round(win_percent(result.score_cp), 1),  # for side to move
+        "win_percent_white": round(win_percent(eval_white), 1),
+        "move_uci": result.best_move_uci,
+        "move_san": board.san(result.best_move) if result.best_move else None,
+        "pv_uci": [m.uci() for m in result.pv],
+        "pv_san": _pv_san(board, result.pv, limit=8),
+        "depth": result.depth,
+    }
+
+
+def analyze_position_multipv(
+    engine, board: chess.Board, *, depth: int = 14, multipv: int = 3
+) -> dict:
+    """Live analysis of one position: top-N candidate lines, best first.
+
+    This powers the live analysis board — it is re-run every time the
+    position on *our own* board changes, and the UI draws an arrow for
+    line 1 (plus fainter arrows for lines 2-3).
+    """
+    results: list[EngineResult] = engine.analyse_multipv(
+        board, depth=depth, multipv=multipv
+    )
+    lines = [_line_to_dict(board, r, i + 1) for i, r in enumerate(results)]
+    best = results[0] if results else None
+    eval_white = (
+        (best.score_cp if board.turn == chess.WHITE else -best.score_cp)
+        if best
+        else 0
+    )
+    return {
+        "fen": board.fen(),
+        "turn": "white" if board.turn == chess.WHITE else "black",
+        "eval_white_cp": eval_white,
+        "mate_white": (
+            (best.mate if board.turn == chess.WHITE else -best.mate)
+            if best and best.mate is not None
+            else None
+        ),
+        "win_percent_white": round(win_percent(eval_white), 1),
+        "best_move_uci": best.best_move_uci if best else None,
+        "best_move_san": (
+            board.san(best.best_move) if best and best.best_move else None
+        ),
+        "lines": lines,
+        "depth": best.depth if best else depth,
+        "engine": engine.name,
+        "is_check": board.is_check(),
+        "is_game_over": board.is_game_over(),
+    }
+
+
+def evaluate_guess(engine, board: chess.Board, move: chess.Move, *, depth: int = 14) -> dict:
+    """Score a trainee's guessed move against the engine's top lines.
+
+    'Guess the best move' training: the user commits to a move *before*
+    seeing any engine output; we then report whether it matched the
+    engine's first choice, was in the top 3, or how much Win% it lost —
+    plus the lines themselves, revealed after the guess.
+    """
+    if move not in board.legal_moves:
+        raise ValueError("این حرکت در این وضعیت قانونی نیست.")
+    multi = analyze_position_multipv(engine, board, depth=depth, multipv=3)
+    guessed_san = board.san(move)
+    rank = None
+    for line in multi["lines"]:
+        if line["move_uci"] == move.uci():
+            rank = line["rank"]
+            eval_after_cp = line["eval_cp"]
+            break
+    else:
+        # Not in the top 3: evaluate the position after the guessed move.
+        board.push(move)
+        after: EngineResult = engine.analyse(board, depth=depth)
+        board.pop()
+        eval_after_cp = -after.score_cp
+
+    best_eval = multi["lines"][0]["eval_cp"] if multi["lines"] else eval_after_cp
+    is_best = rank == 1
+    win_before, win_after = win_percent(best_eval), win_percent(eval_after_cp)
+    win_loss = 0.0 if is_best else max(0.0, win_before - win_after)
+    classification = classify(is_best, win_loss)
+    return {
+        "fen": board.fen(),
+        "guessed_san": guessed_san,
+        "guessed_uci": move.uci(),
+        "rank": rank,  # 1..3 or None if outside the engine's top 3
+        "is_engine_best": is_best,
+        "classification": classification,
+        "classification_fa": LABELS_FA[classification],
+        "accuracy": 100.0 if is_best else round(move_accuracy(win_before, win_after), 1),
+        "cp_loss": 0 if is_best else int(max(0, best_eval - eval_after_cp)),
+        "win_before": round(win_before, 1),
+        "win_after": round(max(win_after, win_before) if is_best else win_after, 1),
+        "win_loss": round(win_loss, 1),
+        "best_move_san": multi["best_move_san"],
+        "best_move_uci": multi["best_move_uci"],
+        "lines": multi["lines"],  # revealed only after the guess — the lesson
+        "engine": multi["engine"],
+        "depth": multi["depth"],
+    }
+
+
 def analyze_game(
     engine,
     game: "chess.pgn.Game",  # noqa: F821 - chess.pgn is part of python-chess

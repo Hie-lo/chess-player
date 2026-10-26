@@ -1,1 +1,4 @@
 python-chess>=1.11
+# Image import (position from a manually supplied board image)
+Pillow>=10
+numpy>=1.26

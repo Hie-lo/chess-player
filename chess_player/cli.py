@@ -10,7 +10,12 @@ Ask the engine about one position you set up yourself (analysis board)::
 
     python -m chess_player fen "rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2"
 
-Launch the offline training web app::
+Read a position from a board image you supply, and analyse it::
+
+    python -m chess_player image my_board.png --turn white --analyze
+
+Launch the live-analysis web studio (analysis board + play vs engine
++ guess-the-move training + PGN review + image import)::
 
     python -m chess_player serve --port 8000
 """
@@ -99,6 +104,59 @@ def cmd_fen(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_image(args: argparse.Namespace) -> int:
+    """Read a position from an image file the user supplies (cropped board).
+
+    Prints the proposed FEN (and, with --analyze, the top engine lines).
+    Always eyeball the printed board against your image before trusting
+    it — the web app's editor is the safer path for real screenshots.
+    """
+    image_path = Path(args.image)
+    if not image_path.exists():
+        print(f"فایل تصویر پیدا نشد: {image_path}", file=sys.stderr)
+        return 1
+    try:
+        from .analysis import analyze_position_multipv
+        from .image_fen import ImageImportUnavailable, board_grid_from_image, fen_from_grid
+    except ImportError as exc:  # pragma: no cover
+        print(f"واردکردن تصویر در دسترس نیست: {exc}", file=sys.stderr)
+        return 1
+    try:
+        proposal = board_grid_from_image(image_path.read_bytes())
+    except ImageImportUnavailable as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    fen = fen_from_grid(proposal["grid"], args.turn)
+    board = chess.Board(fen)
+    print(board)
+    print(f"\nFEN حدسی: {fen}")
+    low = [
+        (r, c)
+        for r, row in enumerate(proposal["confidences"])
+        for c, conf in enumerate(row)
+        if conf < 0.55 and proposal["grid"][r][c]
+    ]
+    if low:
+        squares = ", ".join(f"{'abcdefgh'[c]}{8 - r}" for r, c in low)
+        print(f"⚠️ خانه‌های کم‌اطمینان (حتماً بررسی کنید): {squares}")
+    if not board.is_valid():
+        print(f"⚠️ وضعیت قانونی نیست (کد {board.status()}) — در وب‌اپ با ویرایشگر اصلاح کنید.")
+        return 1
+    if args.analyze:
+        engine = get_engine(args.engine)
+        try:
+            info = analyze_position_multipv(engine, board, depth=args.depth, multipv=3)
+        finally:
+            engine.close()
+        print(f"\nموتور: {info['engine']} | عمق {info['depth']} | شانس برد سفید {info['win_percent_white']}٪")
+        for line in info["lines"]:
+            print(
+                f"  {line['rank']}. {line['move_san']} "
+                f"({line['eval_white_cp'] / 100:+.2f})  {' '.join(line['pv_san'])}"
+            )
+    return 0
+
+
 def cmd_serve(args: argparse.Namespace) -> int:
     from .webapp import serve
 
@@ -126,7 +184,16 @@ def build_parser() -> argparse.ArgumentParser:
     _add_engine_args(p_fen)
     p_fen.set_defaults(func=cmd_fen)
 
-    p_serve = sub.add_parser("serve", help="اجرای وب‌اپ تمرین آفلاین + تحلیل PGN")
+    p_image = sub.add_parser(
+        "image", help="خواندن وضعیت از تصویر تخته (فایل دستی، برش‌خورده روی خود تخته)"
+    )
+    p_image.add_argument("image", help="مسیر فایل تصویر (PNG/JPG) — فقط خود تخته، مربعی")
+    p_image.add_argument("--turn", choices=["white", "black"], default="white")
+    p_image.add_argument("--analyze", action="store_true", help="نمایش سه خط برتر موتور")
+    _add_engine_args(p_image)
+    p_image.set_defaults(func=cmd_image)
+
+    p_serve = sub.add_parser("serve", help="اجرای وب‌اپ استودیو تحلیل زنده")
     p_serve.add_argument("--host", default="0.0.0.0")
     p_serve.add_argument("--port", type=int, default=8000)
     p_serve.add_argument("--engine", default="auto")

@@ -107,6 +107,9 @@ class StockfishEngine:
             else chess.engine.Limit(depth=depth)
         )
         info = self._engine.analyse(board, limit)
+        return self._info_to_result(board, info, depth)
+
+    def _info_to_result(self, board: chess.Board, info, depth: int) -> EngineResult:
         score = info["score"].pov(board.turn)
         pv = list(info.get("pv", []))
         return EngineResult(
@@ -117,6 +120,26 @@ class StockfishEngine:
             depth=int(info.get("depth", depth)),
             engine_name=self.name,
         )
+
+    def analyse_multipv(
+        self,
+        board: chess.Board,
+        *,
+        depth: int = 14,
+        multipv: int = 3,
+        time_limit: float | None = None,
+    ) -> list[EngineResult]:
+        """Top-N lines (UCI ``setoption name MultiPV``), best first."""
+        terminal = _terminal_result(board, self.name)
+        if terminal is not None:
+            return [terminal]
+        limit = (
+            chess.engine.Limit(time=time_limit)
+            if time_limit is not None
+            else chess.engine.Limit(depth=depth)
+        )
+        infos = self._engine.analyse(board, limit, multipv=max(1, multipv))
+        return [self._info_to_result(board, info, depth) for info in infos]
 
     def close(self) -> None:
         try:
@@ -213,6 +236,9 @@ class SimpleEngine:
             return terminal
         depth = max(1, min(depth, self.max_depth))
         score, pv = self._negamax(board, depth, -MATE_SCORE - 1, MATE_SCORE + 1, 0)
+        return self._to_result(score, pv, depth)
+
+    def _to_result(self, score: int, pv: list[chess.Move], depth: int) -> EngineResult:
         mate = None
         reported_cp = score
         if abs(score) > MATE_SCORE - 1000:
@@ -224,10 +250,45 @@ class SimpleEngine:
             best_move=pv[0] if pv else None,
             score_cp=int(reported_cp),
             mate=mate,
-            pv=pv,
+            pv=list(pv),
             depth=depth,
             engine_name=self.name,
         )
+
+    def analyse_multipv(
+        self,
+        board: chess.Board,
+        *,
+        depth: int = 2,
+        multipv: int = 3,
+        time_limit: float | None = None,  # API compatibility; ignored
+    ) -> list[EngineResult]:
+        """Top-N lines by searching every root move (best first).
+
+        This costs roughly one search per legal move, so the web app uses
+        depth 2 for the fallback engine; Stockfish does MultiPV natively
+        inside a single search and is far cheaper per line.
+        """
+        terminal = _terminal_result(board, self.name)
+        if terminal is not None:
+            return [terminal]
+        depth = max(1, min(depth, self.max_depth))
+        scored: list[tuple[int, list[chess.Move]]] = []
+        for move in _ordered_moves(board):
+            board.push(move)
+            if board.is_game_over():
+                child_score, child_pv = _evaluate(board), []
+            else:
+                child_score, child_pv = self._negamax(
+                    board, depth - 1, -MATE_SCORE - 1, MATE_SCORE + 1, 1
+                )
+            board.pop()
+            scored.append((-child_score, [move, *child_pv]))
+        scored.sort(key=lambda item: item[0], reverse=True)
+        return [
+            self._to_result(score, pv, depth)
+            for score, pv in scored[: max(1, multipv)]
+        ]
 
     def _quiescence(self, board: chess.Board, alpha: int, beta: int, ply: int) -> int:
         """Captures-only search at the horizon.

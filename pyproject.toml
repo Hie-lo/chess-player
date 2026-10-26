@@ -15,12 +15,16 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
+image = ["Pillow>=10", "numpy>=1.26"]
 
 [project.scripts]
 chess-player = "chess_player.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["chess_player*"]
+
+[tool.setuptools.package-data]
+chess_player = ["static/*.html", "*.npz"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
