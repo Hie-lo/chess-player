@@ -415,8 +415,9 @@ def serve(host: str = "0.0.0.0", port: int = 8000, engine_arg: str = "auto") -> 
         candidates = stockfish_candidates()
         print(
             "ℹ️ Stockfish پیدا نشد/اجرا نشد و موتور ضعیف جایگزین فعال است.\n"
-            "   فایل اجرایی Stockfish (بعد از خارج‌کردن از زیپ) را یکی از این جاها بگذارید:\n"
-            "   ریشهٔ پروژه، پوشهٔ engines/‏، یا با فلگ ‎--engine \"مسیر\\stockfish.exe\"‎\n"
+            "   ساده‌ترین راه — نصب خودکار موتور واقعی:\n"
+            "     python -m chess_player install-stockfish\n"
+            "   (توجه: ‎pip install stockfish‎ فقط wrapper پایتون است و موتور ندارد.)\n"
             "   مسیرهای بررسی‌شده با دستور `python -m chess_player doctor` دیده می‌شوند."
             + (f"\n   نامزدهای پیدا‌شده: {candidates}" if candidates else ""),
             flush=True,

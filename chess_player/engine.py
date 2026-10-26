@@ -413,9 +413,12 @@ def stockfish_candidates(
     Search order: explicit path -> ``$STOCKFISH_PATH`` -> ``PATH`` ->
     well-known system locations -> the project folder, recursively
     (``./stockfish.exe``, ``./engines/...``, ``./stockfish/stockfish-*.exe``
-    and friends).  Dropping the extracted binary anywhere in the project
-    is therefore enough — run ``python -m chess_player doctor`` to see
-    exactly what was found.
+    and friends) -> the user's ``Downloads`` folder (the browser's
+    default save location — a common place for the extracted engine to
+    be hiding) -> any ``stockfish*.exe`` bundled inside site-packages.
+    Dropping the extracted binary anywhere in the project is therefore
+    enough — run ``python -m chess_player doctor`` to see exactly what
+    was found, or ``install-stockfish`` to fetch the real engine.
     """
     found: list[str] = []
 
@@ -437,7 +440,15 @@ def stockfish_candidates(
     search_roots: list[Path] = list(roots) if roots is not None else []
     if roots is None:
         project_root = Path(__file__).resolve().parent.parent
-        search_roots = [Path.cwd(), project_root]
+        search_roots = [Path.cwd(), project_root, Path.home() / "Downloads"]
+        try:
+            import sysconfig
+
+            purelib = sysconfig.get_path("purelib")
+            if purelib:
+                search_roots.append(Path(purelib))
+        except Exception:
+            pass
 
     globbed: list[Path] = []
     for root in search_roots:
@@ -449,7 +460,13 @@ def stockfish_candidates(
             except OSError:
                 continue
             for match in matches:
-                if any(part in _SKIP_DIRS for part in match.parts):
+                # Skip noise dirs *relative to this root* (so searching
+                # a venv's site-packages explicitly still works).
+                try:
+                    rel_parts = match.relative_to(root).parts
+                except ValueError:
+                    rel_parts = match.parts
+                if any(part in _SKIP_DIRS for part in rel_parts):
                     continue
                 if match not in globbed and _is_plausible_binary(match):
                     globbed.append(match)

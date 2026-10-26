@@ -23,6 +23,11 @@ Diagnose an engine that will not start (where Stockfish was searched,
 whether each candidate launches, a test analysis)::
 
     python -m chess_player doctor
+
+Download + install the real Stockfish binary automatically
+(``pip install stockfish`` does NOT provide one — it is a wrapper)::
+
+    python -m chess_player install-stockfish
 """
 
 from __future__ import annotations
@@ -179,6 +184,34 @@ def cmd_serve(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_install_stockfish(args: argparse.Namespace) -> int:
+    from .installer import install_stockfish, manual_download_url
+
+    print(
+        "نصب موتور واقعی Stockfish — توجه: دستور ‎pip install stockfish‎ "
+        "فقط یک کتابخانهٔ پایتون نصب می‌کند و داخلش هیچ موتوری نیست؛ "
+        "این دستور باینری رسمی را دانلود و نصب می‌کند."
+    )
+    try:
+        installed = install_stockfish(Path(args.dest), force=args.force)
+    except Exception as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        url = manual_download_url()
+        if url:
+            print(
+                "راه دستی: همین فایل را با مرورگر دانلود و از زیپ خارج کنید،\n"
+                f"  {url}\n"
+                "بعد فایل اجرایی داخلش را در پوشهٔ engines بگذارید و "
+                "`python -m chess_player doctor` را اجرا کنید.",
+                file=sys.stderr,
+            )
+        return 1
+    print("\nحالا اجرا کنید و در مرورگر http://localhost:8000 را باز کنید:")
+    print("  python -m chess_player serve --port 8000")
+    print(f"(موتور نصب‌شده: {installed})")
+    return 0
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     """Diagnose engine discovery: candidates, launch test, test analysis."""
     import importlib.util
@@ -193,6 +226,16 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     for module in ("chess", "PIL", "numpy"):
         ok = importlib.util.find_spec(module) is not None
         print(f"ماژول {module}: {'✓' if ok else '✗ نصب نیست'}")
+
+    from .installer import pip_wrapper_version
+
+    wrapper_version = pip_wrapper_version()
+    if wrapper_version:
+        print(
+            f"ℹ️ بستهٔ pip ‎stockfish‎ نسخهٔ {wrapper_version} نصب است — اما این "
+            "فقط یک کتابخانهٔ پایتون (چند فایل ‎.py‎) است و داخلش موتور/فایل "
+            "اجرایی نیست، پس به‌تنهایی کافی نیست."
+        )
 
     explicit = None if args.engine in ("auto", "simple") else args.engine
     candidates = stockfish_candidates(explicit)
@@ -242,10 +285,12 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         )
         if "SimpleEngine" in engine.name and args.engine != "simple":
             print(
-                "⚠️ هنوز موتور جایگزین فعال است. یکی از این کارها:\n"
-                "  ۱) فایل اجرایی Stockfish را در ریشهٔ پروژه یا پوشهٔ engines بگذارید و دوباره اجرا کنید؛\n"
-                '  ۲) مسیر کامل را بدهید:  python -m chess_player serve --engine "C:\\مسیر\\stockfish.exe"\n'
-                "  ۳) یا متغیر STOCKFISH_PATH را روی همان مسیر تنظیم کنید."
+                "⚠️ هنوز موتور جایگزین فعال است. ساده‌ترین راه — نصب خودکار موتور واقعی:\n"
+                "  ★ python -m chess_player install-stockfish\n"
+                "  یا دستی: فایل اجرایی Stockfish (از زیپ خارج‌شده) را در ریشهٔ پروژه یا پوشهٔ engines بگذارید؛\n"
+                '  یا مسیر کامل بدهید:  python -m chess_player serve --engine "C:\\مسیر\\stockfish.exe"\n'
+                "  یا متغیر STOCKFISH_PATH را روی همان مسیر تنظیم کنید.\n"
+                "  توجه: دستور ‎pip install stockfish‎ موتور نصب نمی‌کند (فقط wrapper پایتون است)."
             )
             return 2
         return 0
@@ -296,6 +341,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="'auto'، 'simple' یا مسیر کامل فایل اجرایی Stockfish",
     )
     p_doctor.set_defaults(func=cmd_doctor)
+
+    p_install = sub.add_parser(
+        "install-stockfish",
+        help="دانلود و نصب خودکار موتور واقعی Stockfish در پوشهٔ engines",
+    )
+    p_install.add_argument("--dest", default="engines", help="پوشهٔ نصب (پیش‌فرض: engines)")
+    p_install.add_argument("--force", action="store_true", help="حتی اگر موتور کارکننده‌ای هست، دوباره نصب کن")
+    p_install.set_defaults(func=cmd_install_stockfish)
 
     return parser
 

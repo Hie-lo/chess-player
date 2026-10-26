@@ -22,11 +22,10 @@
 ```bash
 pip install -r requirements.txt
 
-# نصب Stockfish (شدیداً توصیه می‌شود) — بدون آن، موتور جایگزین آموزشی
-# داخلی اجرا می‌شود که برای نمایش فرایند خوب است ولی ضعیف است:
-sudo apt install stockfish             # Ubuntu/Debian
-brew install stockfish                 # macOS
-# Windows: دانلود از stockfishchess.org
+# نصب موتور واقعی Stockfish با یک دستور (همهٔ سیستم‌عامل‌ها — توصیه‌شده):
+python -m chess_player install-stockfish
+# بدون آن، موتور جایگزین آموزشی داخلی اجرا می‌شود که ضعیف است.
+# توجه: ‎pip install stockfish‎ موتور نصب نمی‌کند؛ فقط یک wrapper پایتون است!
 
 # ★ استودیو تحلیل زنده در مرورگر (اصلی‌ترین راه استفاده):
 python -m chess_player serve --port 8000      # → http://localhost:8000
@@ -76,18 +75,33 @@ python -m chess_player image examples/sample_board.png --turn black --analyze
 
 ### Stockfish را دانلود کردم ولی باز SimpleEngine می‌آید
 
-خودکار پیداش می‌کنیم، به این شرط‌ها (با دستور
-`python -m chess_player doctor` دقیق می‌بینید کجاها گشتیم و هر فایل چرا
-اجرا نشد):
+**ساده‌ترین راه — نصب خودکار موتور واقعی (یک دستور):**
+
+```bash
+python -m chess_player install-stockfish
+python -m chess_player serve --port 8000
+```
+
+این دستور آخرین نسخهٔ رسمی Stockfish را متناسب با سیستم شما دانلود
+می‌کند، در پوشهٔ `engines/` می‌گذارد، اجراش را تست می‌کند و بعد از آن
+برنامه خودکار پیداش می‌کند.
+
+> ⚠️ ‏`pip install Stockfish` موتور نصب **نمی‌کند**! آن بسته فقط یک
+> کتابخانهٔ پایتون است (چند فایل ‎`.py`‎) که خودش هم انتظار دارد باینری
+> Stockfish را جدا داشته باشید. اشتباه رایجی است؛ `doctor` حالا صریحاً
+> همین را گزارش می‌کند.
+
+راه دستی (اگر دانلود خودکار نشد): با `python -m chess_player doctor`
+می‌بینید کجاها گشتیم؛ بعد:
 
 1. فایل دانلودی را از **زیپ خارج کنید**؛ برنامه فایل اجرایی
    (‏`stockfish.exe` و مانند آن) را لازم دارد، نه خود زیپ را.
-2. آن را در **ریشهٔ پروژه** یا پوشهٔ **`engines/`** بگذارید — یا مسیر
-   کامل بدهید:
+2. آن را در **ریشهٔ پروژه**، پوشهٔ **`engines/`** یا حتی در
+   **`Downloads`** بگذارید (هر سه گشته می‌شوند) — یا مسیر کامل بدهید:
    ‏`python -m chess_player serve --engine "C:\مسیر\stockfish.exe"`
    یا متغیر محیطی `STOCKFISH_PATH` را روی همان مسیر بگذارید.
 3. نسخهٔ مناسب سیستم‌تان باشد (معمولاً Windows x86-64؛ اگر چند نوع در
-   پوشه است برنامه اول نوع‌های سازگارتر مثل AVX2 را امتحان می‌کند).
+   پوشه است برنامه اول نوع‌های سازگارتر را امتحان می‌کند).
    روی لینوکس ممکن است لازم شود: ‏`chmod +x stockfish`
 
 ## ریاضیات کیفیت حرکت (خلاصه)
@@ -101,7 +115,7 @@ python -m chess_player image examples/sample_board.png --turn black --analyze
 ## توسعه و تست
 
 ```bash
-pytest    # ۲۰ تست: موتور، تحلیل زنده و حدس حرکت، خواندن تصویر، وب‌اپ، پیداشدن Stockfish
+pytest    # ۲۵ تست: موتور، تحلیل زنده و حدس حرکت، خواندن تصویر، وب‌اپ، نصب/پیداشدن Stockfish
 ```
 
 ساختار:
@@ -113,7 +127,8 @@ chess_player/
 ├── image_fen.py         # تصویر دستی → تخته: کم‌کردن پس‌زمینه، رنگ مهره، تطابق الگو
 ├── piece_templates.npz  # الگوهای مهره‌ها (تولید: python -m chess_player.image_fen)
 ├── report.py            # گزارش Markdown / JSON / HTML + نمودار SVG
-├── cli.py               # analyze / fen / image / serve
+├── installer.py         # نصب خودکار باینری رسمی Stockfish متناسب با سیستم
+├── cli.py               # analyze / fen / image / serve / doctor / install-stockfish
 ├── webapp.py            # سرور وب (کتابخانهٔ استاندارد) و APIها
 └── static/index.html    # رابط کاربری استودیو تحلیل زنده
 examples/                # بازی‌های نمونه + sample_board.png
