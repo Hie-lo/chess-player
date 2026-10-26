@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+dist/
+build/
+*.egg-info/
+reports/
+*.html
+!docs/*.html
+.env
+# Local engine binaries (download Stockfish separately, do not commit it)
+stockfish*
+engines/
